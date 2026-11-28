@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cây Thông Noel 3D - Tự Động Xoay Khi Không Điều Khiển</title>
+    <title>Cây Thông Noel 3D - Hiệu Ứng Lên Xuống & Cử Chỉ Tay</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -26,10 +26,10 @@
             display: flex;
             flex-direction: column;
             gap: 12px;
-            max-width: 350px;
+            max-width: 365px;
         }
         .panel {
-            background: rgba(15, 15, 25, 0.78);
+            background: rgba(15, 15, 25, 0.8);
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 215, 0, 0.3);
             border-radius: 14px;
@@ -53,13 +53,24 @@
             border: 1px solid rgba(255, 215, 0, 0.4);
         }
         .guide-item {
-            font-size: 0.84rem;
+            font-size: 0.83rem;
             color: #d0d0e0;
             margin-bottom: 6px;
             line-height: 1.4;
         }
         .guide-item strong { color: #ffae00; }
-        
+        #cam-error-note {
+            display: none;
+            margin-top: 8px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(231, 76, 60, 0.18);
+            border: 1px solid rgba(231, 76, 60, 0.45);
+            color: #ff9f9f;
+            font-size: 0.78rem;
+            line-height: 1.35;
+        }
+
         .btn-group {
             display: flex;
             flex-wrap: wrap;
@@ -96,8 +107,8 @@
             position: fixed;
             bottom: 20px;
             right: 20px;
-            width: 190px;
-            height: 142px;
+            width: 195px;
+            height: 146px;
             border-radius: 12px;
             overflow: hidden;
             border: 2px solid rgba(255, 215, 0, 0.45);
@@ -117,7 +128,7 @@
             bottom: 0;
             left: 0;
             right: 0;
-            background: rgba(0, 0, 0, 0.78);
+            background: rgba(0, 0, 0, 0.82);
             color: #ffd700;
             font-size: 0.72rem;
             text-align: center;
@@ -127,7 +138,6 @@
     </style>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
@@ -140,11 +150,13 @@
                 <span>🎄 Cây Thông Kỷ Niệm</span>
                 <span class="badge" id="photo-counter">4 ảnh mẫu</span>
             </h1>
-            <div class="guide-item">🔄 <strong>Không điều khiển:</strong> Cây thông tự động xoay tròn</div>
+            <div class="guide-item">🔄 <strong>Không điều khiển:</strong> Xoay tròn & nhấp nhô bồng bềnh</div>
             <div class="guide-item">✊ <strong>Nắm tay:</strong> Thu cây thông & giấu ảnh</div>
             <div class="guide-item">🖐 <strong>Xòe tay:</strong> Bung thiên hà & hiện ảnh</div>
-            <div class="guide-item">↔️ <strong>Điều hướng:</strong> Đưa tay sang <strong>Trái</strong> xoay trái • <strong>Giữa</strong> dừng hẳn • <strong>Phải</strong> xoay phải</div>
+            <div class="guide-item">↕️↔️ <strong>Điều hướng tay:</strong> Trái / Phải để xoay • Lên / Xuống để nâng hạ • Vùng giữa đứng yên</div>
             <div class="guide-item">👌 <strong>Chụm ngón trỏ & cái:</strong> Phóng to ảnh</div>
+            <div class="guide-item">🖱️ <strong>Chuột:</strong> Kéo xoay • Cuộn bung/thu • Nhấp đúp xem ảnh</div>
+            <div id="cam-error-note"></div>
             <div class="btn-group">
                 <label for="file-input" class="upload-label">➕ Thêm Nhiều Ảnh</label>
                 <input type="file" id="file-input" accept="image/*" multiple>
@@ -155,7 +167,7 @@
     </div>
 
     <div id="camera-box">
-        <video id="webcam" autoplay playsinline></video>
+        <video id="webcam" autoplay playsinline muted></video>
         <div id="gesture-status">Đang chờ tay...</div>
     </div>
 
@@ -199,6 +211,7 @@
         const treeTargets = new Float32Array(PARTICLE_COUNT * 3);
         const explodeTargets = new Float32Array(PARTICLE_COUNT * 3);
         const colors = new Float32Array(PARTICLE_COUNT * 3);
+        const particlePhases = new Float32Array(PARTICLE_COUNT); // Pha sóng lên xuống cho từng hạt
 
         const palette = [
             new THREE.Color(0xffd700),
@@ -231,6 +244,8 @@
             positions[i3] = treeTargets[i3];
             positions[i3 + 1] = treeTargets[i3 + 1];
             positions[i3 + 2] = treeTargets[i3 + 2];
+
+            particlePhases[i] = Math.random() * Math.PI * 2;
 
             const color = palette[Math.floor(Math.random() * palette.length)];
             colors[i3] = color.r;
@@ -429,16 +444,20 @@
             rebuildPhotoCards();
         });
 
-        // --- 5. TRẠNG THÁI TƯƠNG TÁC ---
+        // --- 5. TRẠNG THÁI TƯƠNG TÁC (XOAY NGANG + LÊN XUỐNG) ---
         let targetExpansion = 0;
         let currentExpansion = 0;
         let isPinching = false;
         let activePhotoIndex = 0;
 
-        let isHandDetected = false;   // Cờ nhận biết có đang điều khiển bằng tay hay không
-        const IDLE_ROT_SPEED = 0.005; // Tốc độ tự xoay vòng tròn khi không điều khiển
+        let isHandDetected = false;
+        const IDLE_ROT_SPEED = 0.005;
         let targetRotSpeedY = IDLE_ROT_SPEED;
         let currentRotSpeedY = IDLE_ROT_SPEED;
+
+        // Điều khiển lên xuống (cao độ Y & góc nghiêng X)
+        let targetOffsetY = 0;
+        let currentOffsetY = 0;
         let targetRotX = 0;
 
         let isDragging = false;
@@ -448,7 +467,8 @@
         window.addEventListener('mousemove', (e) => {
             if (!isDragging) return;
             mainGroup.rotation.y += (e.clientX - prevMouse.x) * 0.008;
-            targetRotX += (e.clientY - prevMouse.y) * 0.005;
+            targetOffsetY = THREE.MathUtils.clamp(targetOffsetY - (e.clientY - prevMouse.y) * 0.02, -4.5, 4.5);
+            targetRotX = THREE.MathUtils.clamp(targetRotX + (e.clientY - prevMouse.y) * 0.004, -0.5, 0.5);
             prevMouse = { x: e.clientX, y: e.clientY };
         });
         window.addEventListener('wheel', (e) => {
@@ -475,42 +495,96 @@
             });
         }
 
-        // --- 6. NHẬN DIỆN NGẦM 3 VÙNG CAMERA: TRÁI (35%) | GIỮA (30%) | PHẢI (35%) ---
+        // --- 6. NHẬN DIỆN CAMERA: 3 VÙNG NGANG (TRÁI/GIỮA/PHẢI) & 3 VÙNG DỌC (LÊN/GIỮA/XUỐNG) ---
         const videoElement = document.getElementById('webcam');
         const statusText = document.getElementById('gesture-status');
         const cameraBox = document.getElementById('camera-box');
+        const camErrorNote = document.getElementById('cam-error-note');
+        const btnCam = document.getElementById('btn-cam');
 
-        document.getElementById('btn-cam').addEventListener('click', async () => {
+        let handsInstance = null;
+        let activeStream = null;
+        let detectLoopId = null;
+
+        function showCamError(msg) {
+            camErrorNote.style.display = 'block';
+            camErrorNote.innerHTML = msg;
+        }
+
+        btnCam.addEventListener('click', async () => {
+            camErrorNote.style.display = 'none';
             cameraBox.style.display = 'block';
-            statusText.innerText = 'Đang khởi động AI...';
+            statusText.innerText = 'Đang xin quyền Camera...';
 
-            const hands = new Hands({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-            });
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                statusText.innerText = 'Lỗi Camera';
+                showCamError('Trình duyệt không hỗ trợ Camera hoặc trang đang mở qua kết nối không bảo mật (cần <strong>HTTPS</strong> hoặc <strong>localhost</strong>).');
+                return;
+            }
 
-            hands.setOptions({
-                maxNumHands: 1,
-                modelComplexity: 1,
-                minDetectionConfidence: 0.7,
-                minTrackingConfidence: 0.7
-            });
+            try {
+                if (activeStream) {
+                    activeStream.getTracks().forEach(t => t.stop());
+                }
 
-            hands.onResults(onHandResults);
+                activeStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+                    audio: false
+                });
 
-            const cam = new Camera(videoElement, {
-                onFrame: async () => { await hands.send({ image: videoElement }); },
-                width: 320,
-                height: 240
-            });
-            cam.start();
+                videoElement.srcObject = activeStream;
+                await videoElement.play();
+
+                if (!handsInstance && typeof Hands !== 'undefined') {
+                    handsInstance = new Hands({
+                        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                    });
+
+                    handsInstance.setOptions({
+                        maxNumHands: 1,
+                        modelComplexity: 1,
+                        minDetectionConfidence: 0.7,
+                        minTrackingConfidence: 0.7
+                    });
+
+                    handsInstance.onResults(onHandResults);
+                }
+
+                btnCam.innerText = '🔄 Camera Đang Bật';
+                statusText.innerText = '🔄 Tự động xoay & nhấp nhô';
+
+                if (detectLoopId) cancelAnimationFrame(detectLoopId);
+                async function processVideoFrame() {
+                    if (videoElement.readyState >= 2 && handsInstance) {
+                        try {
+                            await handsInstance.send({ image: videoElement });
+                        } catch (_) {}
+                    }
+                    detectLoopId = requestAnimationFrame(processVideoFrame);
+                }
+                detectLoopId = requestAnimationFrame(processVideoFrame);
+            } catch (err) {
+                statusText.innerText = 'Không mở được Camera';
+                let detail = 'Không thể truy cập camera.';
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    detail = 'Bạn đã từ chối quyền Camera. Hãy bấm biểu tượng <strong>Camera / Ổ khóa</strong> trên thanh địa chỉ để cấp quyền <strong>Allow</strong> rồi tải lại trang.';
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    detail = 'Không tìm thấy thiết bị Camera nào trên máy này.';
+                } else if (err.name === 'NotReadableError') {
+                    detail = 'Camera đang được ứng dụng khác sử dụng. Hãy đóng ứng dụng đó và thử lại.';
+                } else if (!window.isSecureContext) {
+                    detail = 'Trang hiện tại không chạy trong ngữ cảnh bảo mật (HTTPS / localhost), nên trình duyệt chặn Camera.';
+                }
+                showCamError(detail);
+            }
         });
 
         function onHandResults(results) {
             if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-                // Không có tay điều khiển -> tự động xoay vòng tròn đều đặn
                 isHandDetected = false;
-                statusText.innerText = '🔄 Tự động xoay vòng tròn';
+                statusText.innerText = '🔄 Tự động xoay & nhấp nhô';
                 targetRotSpeedY = IDLE_ROT_SPEED;
+                targetOffsetY = 0;
                 targetRotX = 0;
                 return;
             }
@@ -534,26 +608,49 @@
             ) / 4;
 
             const pinchDist = dist(thumbTip, indexTip);
-            const screenX = 1 - middleMcp.x;
+            const screenX = 1 - middleMcp.x; // 0 = trái, 1 = phải
+            const screenY = middleMcp.y;     // 0 = trên, 1 = dưới
 
-            let zoneLabel = '';
+            // 1. Chia ngầm 3 vùng NGANG (Trái / Giữa / Phải)
+            let hLabel = '';
             if (screenX < 0.35) {
                 const intensity = (0.35 - screenX) / 0.35;
                 targetRotSpeedY = -(0.012 + intensity * 0.025);
-                zoneLabel = '⬅️ Xoay trái';
+                hLabel = '⬅️ Trái';
             } else if (screenX > 0.65) {
                 const intensity = (screenX - 0.65) / 0.35;
                 targetRotSpeedY = (0.012 + intensity * 0.025);
-                zoneLabel = '➡️ Xoay phải';
+                hLabel = '➡️ Phải';
             } else {
                 targetRotSpeedY = 0;
-                zoneLabel = '⏸ Giữ yên';
+                hLabel = '⏸ Giữa';
             }
 
-            targetRotX = (middleMcp.y - 0.5) * 0.5;
+            // 2. Chia ngầm 3 vùng DỌC (Lên / Giữa / Xuống)
+            let vLabel = '';
+            if (screenY < 0.35) {
+                // Phần trên: nâng cây thông / vòng ảnh lên cao
+                const intensity = (0.35 - screenY) / 0.35;
+                targetOffsetY = 1.2 + intensity * 2.8;
+                targetRotX = -(0.1 + intensity * 0.25);
+                vLabel = '⬆️ Lên';
+            } else if (screenY > 0.65) {
+                // Phần dưới: hạ cây thông / vòng ảnh xuống thấp
+                const intensity = (screenY - 0.65) / 0.35;
+                targetOffsetY = -(1.2 + intensity * 2.8);
+                targetRotX = (0.1 + intensity * 0.25);
+                vLabel = '⬇️ Xuống';
+            } else {
+                // Phần giữa: giữ cân bằng
+                targetOffsetY = 0;
+                targetRotX = 0;
+                vLabel = '';
+            }
+
+            const dirText = vLabel ? `${hLabel} ${vLabel}` : hLabel;
 
             if (avgFingerDist < 0.23) {
-                statusText.innerText = `✊ Nắm tay | ${zoneLabel}`;
+                statusText.innerText = `✊ Nắm tay | ${dirText}`;
                 targetExpansion = 0;
                 isPinching = false;
             } else if (pinchDist < 0.055) {
@@ -564,7 +661,7 @@
                 targetRotSpeedY = 0;
                 currentRotSpeedY = 0;
             } else {
-                statusText.innerText = `🖐 Xòe tay | ${zoneLabel}`;
+                statusText.innerText = `🖐 Xòe tay | ${dirText}`;
                 targetExpansion = 1;
                 isPinching = false;
             }
@@ -579,21 +676,28 @@
 
             currentExpansion += (targetExpansion - currentExpansion) * 0.07;
 
+            // Cập nhật vị trí hạt sáng kèm hiệu ứng sóng nhấp nhô lên xuống nhẹ nhàng
             const posAttr = geometry.attributes.position;
             for (let i = 0; i < PARTICLE_COUNT; i++) {
                 const i3 = i * 3;
-                posAttr.array[i3] = THREE.MathUtils.lerp(treeTargets[i3], explodeTargets[i3], currentExpansion);
-                posAttr.array[i3 + 1] = THREE.MathUtils.lerp(treeTargets[i3 + 1], explodeTargets[i3 + 1], currentExpansion);
-                posAttr.array[i3 + 2] = THREE.MathUtils.lerp(treeTargets[i3 + 2], explodeTargets[i3 + 2], currentExpansion);
+                const baseX = THREE.MathUtils.lerp(treeTargets[i3], explodeTargets[i3], currentExpansion);
+                const baseY = THREE.MathUtils.lerp(treeTargets[i3 + 1], explodeTargets[i3 + 1], currentExpansion);
+                const baseZ = THREE.MathUtils.lerp(treeTargets[i3 + 2], explodeTargets[i3 + 2], currentExpansion);
+
+                // Sóng lượn lên xuống nhẹ cho từng hạt sáng
+                const waveY = Math.sin(elapsed * 2.2 + particlePhases[i] + baseY * 0.35) * (0.12 + currentExpansion * 0.25);
+
+                posAttr.array[i3] = baseX;
+                posAttr.array[i3 + 1] = baseY + waveY;
+                posAttr.array[i3 + 2] = baseZ;
             }
             posAttr.needsUpdate = true;
 
+            // Xoay ngang
             if (!isHandDetected && !isDragging && !isPinching) {
-                // Không có điều khiển -> xoay vòng tròn tự động mượt mà
                 currentRotSpeedY += (IDLE_ROT_SPEED - currentRotSpeedY) * 0.06;
                 mainGroup.rotation.y += currentRotSpeedY;
             } else if (!isDragging) {
-                // Đang có tay điều khiển -> tuân theo vùng Trái / Giữa (dừng) / Phải
                 const damping = targetRotSpeedY === 0 ? 0.35 : 0.12;
                 currentRotSpeedY += (targetRotSpeedY - currentRotSpeedY) * damping;
 
@@ -604,9 +708,16 @@
                 mainGroup.rotation.y += currentRotSpeedY;
             }
 
-            mainGroup.rotation.x += (targetRotX - mainGroup.rotation.x) * 0.06;
+            // Chuyển động lên xuống mượt mà (kết hợp điều khiển tay + nhịp nhấp nhô tự nhiên)
+            currentOffsetY += (targetOffsetY - currentOffsetY) * 0.08;
+            const idleBobbingY = !isPinching ? Math.sin(elapsed * 1.6) * 0.55 : 0;
+            mainGroup.position.y = currentOffsetY + idleBobbingY;
 
+            mainGroup.rotation.x += (targetRotX - mainGroup.rotation.x) * 0.07;
+
+            // Ngôi sao 5 cánh xoay và nhấp nhô nhẹ trên đỉnh
             topStar.rotation.y = elapsed * 1.5;
+            topStar.position.y = 8.9 + Math.sin(elapsed * 2.5) * 0.18;
             topStar.scale.setScalar(Math.max(0.001, 1 - currentExpansion * 0.9));
 
             const revealFactor = THREE.MathUtils.clamp((currentExpansion - 0.08) / 0.7, 0, 1);
@@ -630,7 +741,8 @@
                     card.userData.explodePos,
                     currentExpansion
                 );
-                basePos.y += Math.sin(elapsed * 2 + idx) * 0.25 * revealFactor;
+                // Hiệu ứng nhấp nhô lên xuống lệch pha cho từng khung ảnh
+                basePos.y += Math.sin(elapsed * 2.2 + idx * 0.9) * 0.45 * revealFactor;
 
                 if (isPinching && idx === activePhotoIndex) {
                     const frontWorldPos = new THREE.Vector3(0, 0, 18);
