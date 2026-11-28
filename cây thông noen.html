@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cây Thông Noel 3D - Hiệu Ứng Lên Xuống & Cử Chỉ Tay</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background-color: #030308;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+            user-select: none;
+        }
+        #canvas-container {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+        }
+        #ui-overlay {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            max-width: 365px;
+        }
+        .panel {
+            background: rgba(15, 15, 25, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            border-radius: 14px;
+            padding: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65);
+        }
+        h1 {
+            font-size: 1.1rem;
+            color: #ffd700;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .badge {
+            background: rgba(255, 215, 0, 0.2);
+            color: #ffd700;
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 215, 0, 0.4);
+        }
+        .guide-item {
+            font-size: 0.83rem;
+            color: #d0d0e0;
+            margin-bottom: 6px;
+            line-height: 1.4;
+        }
+        .guide-item strong { color: #ffae00; }
+        #cam-error-note {
+            display: none;
+            margin-top: 8px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(231, 76, 60, 0.18);
+            border: 1px solid rgba(231, 76, 60, 0.45);
+            color: #ff9f9f;
+            font-size: 0.78rem;
+            line-height: 1.35;
+        }
+
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        button, .upload-label {
+            flex: 1 1 45%;
+            background: linear-gradient(135deg, #d4af37, #aa771c);
+            color: #000;
+            font-weight: 600;
+            font-size: 0.82rem;
+            border: none;
+            border-radius: 8px;
+            padding: 9px 10px;
+            cursor: pointer;
+            text-align: center;
+            transition: transform 0.2s, filter 0.2s;
+        }
+        button:hover, .upload-label:hover {
+            filter: brightness(1.15);
+            transform: translateY(-1px);
+        }
+        #btn-clear {
+            background: rgba(255, 255, 255, 0.12);
+            color: #ff8888;
+            border: 1px solid rgba(255, 100, 100, 0.3);
+            flex: 1 1 100%;
+            display: none;
+        }
+        #file-input { display: none; }
+
+        #camera-box {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 195px;
+            height: 146px;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid rgba(255, 215, 0, 0.45);
+            background: #000;
+            z-index: 10;
+            display: none;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.75);
+        }
+        #webcam {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        #gesture-status {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.82);
+            color: #ffd700;
+            font-size: 0.72rem;
+            text-align: center;
+            padding: 4px;
+            font-weight: bold;
+        }
+    </style>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-overlay">
+        <div class="panel">
+            <h1>
+                <span>🎄 Cây Thông Kỷ Niệm</span>
+                <span class="badge" id="photo-counter">4 ảnh mẫu</span>
+            </h1>
+            <div class="guide-item">🔄 <strong>Không điều khiển:</strong> Xoay tròn & nhấp nhô bồng bềnh</div>
+            <div class="guide-item">✊ <strong>Nắm tay:</strong> Thu cây thông & giấu ảnh</div>
+            <div class="guide-item">🖐 <strong>Xòe tay:</strong> Bung thiên hà & hiện ảnh</div>
+            <div class="guide-item">↕️↔️ <strong>Điều hướng tay:</strong> Trái / Phải để xoay • Lên / Xuống để nâng hạ • Vùng giữa đứng yên</div>
+            <div class="guide-item">👌 <strong>Chụm ngón trỏ & cái:</strong> Phóng to ảnh</div>
+            <div class="guide-item">🖱️ <strong>Chuột:</strong> Kéo xoay • Cuộn bung/thu • Nhấp đúp xem ảnh</div>
+            <div id="cam-error-note"></div>
+            <div class="btn-group">
+                <label for="file-input" class="upload-label">➕ Thêm Nhiều Ảnh</label>
+                <input type="file" id="file-input" accept="image/*" multiple>
+                <button id="btn-cam">📷 Bật Camera</button>
+                <button id="btn-clear">🗑️ Xóa ảnh & đặt lại</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="camera-box">
+        <video id="webcam" autoplay playsinline muted></video>
+        <div id="gesture-status">Đang chờ tay...</div>
+    </div>
+
+    <script>
+        // --- 1. KHỞI TẠO CẢNH 3D ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x030308, 0.014);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 27);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const mainGroup = new THREE.Group();
+        scene.add(mainGroup);
+
+        // --- 2. TEXTURE HẠT PHÁT SÁNG ---
+        function createGlowTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            grad.addColorStop(0.25, 'rgba(255, 230, 150, 0.9)');
+            grad.addColorStop(0.6, 'rgba(255, 140, 0, 0.3)');
+            grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 64, 64);
+            return new THREE.CanvasTexture(canvas);
+        }
+        const particleTex = createGlowTexture();
+
+        // --- 3. HỆ THỐNG HẠT CÂY THÔNG ---
+        const PARTICLE_COUNT = 3000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const treeTargets = new Float32Array(PARTICLE_COUNT * 3);
+        const explodeTargets = new Float32Array(PARTICLE_COUNT * 3);
+        const colors = new Float32Array(PARTICLE_COUNT * 3);
+        const particlePhases = new Float32Array(PARTICLE_COUNT); // Pha sóng lên xuống cho từng hạt
+
+        const palette = [
+            new THREE.Color(0xffd700),
+            new THREE.Color(0xffaa00),
+            new THREE.Color(0xff3333),
+            new THREE.Color(0x2ecc71),
+            new THREE.Color(0xffffff)
+        ];
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const i3 = i * 3;
+            const ratio = i / PARTICLE_COUNT;
+            const y = ratio * 16 - 8;
+            const maxRadius = (1 - ratio) * 6.2;
+            const angle = i * 0.35 + Math.random() * 0.5;
+            const radius = maxRadius * (0.3 + 0.7 * Math.sqrt(Math.random()));
+
+            treeTargets[i3] = Math.cos(angle) * radius;
+            treeTargets[i3 + 1] = y;
+            treeTargets[i3 + 2] = Math.sin(angle) * radius;
+
+            const phi = Math.acos(-1 + (2 * i) / PARTICLE_COUNT);
+            const theta = Math.sqrt(PARTICLE_COUNT * Math.PI) * phi;
+            const expRadius = 11 + Math.random() * 14;
+
+            explodeTargets[i3] = expRadius * Math.cos(theta) * Math.sin(phi);
+            explodeTargets[i3 + 1] = expRadius * Math.sin(theta) * Math.sin(phi);
+            explodeTargets[i3 + 2] = expRadius * Math.cos(phi);
+
+            positions[i3] = treeTargets[i3];
+            positions[i3 + 1] = treeTargets[i3 + 1];
+            positions[i3 + 2] = treeTargets[i3 + 2];
+
+            particlePhases[i] = Math.random() * Math.PI * 2;
+
+            const color = palette[Math.floor(Math.random() * palette.length)];
+            colors[i3] = color.r;
+            colors[i3 + 1] = color.g;
+            colors[i3 + 2] = color.b;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const material = new THREE.PointsMaterial({
+            size: 0.42,
+            map: particleTex,
+            vertexColors: true,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        const particleSystem = new THREE.Points(geometry, material);
+        mainGroup.add(particleSystem);
+
+        // --- NGÔI SAO 5 CÁNH 3D TRÊN ĐỈNH CÂY THÔNG ---
+        function createFivePointStarMesh(outerRadius = 1.25, innerRadius = 0.55, depth = 0.35) {
+            const shape = new THREE.Shape();
+            const points = 5;
+
+            for (let i = 0; i < points * 2; i++) {
+                const r = i % 2 === 0 ? outerRadius : innerRadius;
+                const angle = (i * Math.PI) / points + Math.PI / 2;
+                const x = Math.cos(angle) * r;
+                const y = Math.sin(angle) * r;
+
+                if (i === 0) shape.moveTo(x, y);
+                else shape.lineTo(x, y);
+            }
+            shape.closePath();
+
+            const starGeo = new THREE.ExtrudeGeometry(shape, {
+                depth: depth,
+                bevelEnabled: true,
+                bevelSegments: 2,
+                steps: 1,
+                bevelSize: 0.12,
+                bevelThickness: 0.12
+            });
+
+            starGeo.center();
+
+            const starMat = new THREE.MeshBasicMaterial({ color: 0xffdf00 });
+            return new THREE.Mesh(starGeo, starMat);
+        }
+
+        const topStar = createFivePointStarMesh(1.25, 0.55, 0.35);
+        topStar.position.set(0, 8.9, 0);
+        mainGroup.add(topStar);
+
+        // --- 4. HỆ THỐNG QUẢN LÝ NHIỀU ẢNH ĐỘNG ---
+        let photoCards = [];
+        let uploadedTextures = [];
+        const counterBadge = document.getElementById('photo-counter');
+        const btnClear = document.getElementById('btn-clear');
+
+        function createDefaultPhotoTexture(index) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            
+            const grads = [
+                ['#ff7e5f', '#feb47b'],
+                ['#6a11cb', '#2575fc'],
+                ['#11998e', '#38ef7d'],
+                ['#fc4a1a', '#f7b733']
+            ];
+            const g = ctx.createLinearGradient(0, 0, 512, 512);
+            g.addColorStop(0, grads[index % 4][0]);
+            g.addColorStop(1, grads[index % 4][1]);
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 512, 512);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 42px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`Ảnh Kỷ Niệm #${index + 1}`, 256, 240);
+            ctx.font = '24px sans-serif';
+            ctx.fillText('Nhấn "Thêm Nhiều Ảnh"', 256, 295);
+
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function rebuildPhotoCards() {
+            photoCards.forEach(card => mainGroup.remove(card));
+            photoCards = [];
+
+            const isDefault = uploadedTextures.length === 0;
+            const texturesToUse = isDefault
+                ? [0, 1, 2, 3].map(i => createDefaultPhotoTexture(i))
+                : uploadedTextures;
+
+            const total = texturesToUse.length;
+            counterBadge.innerText = isDefault ? `${total} ảnh mẫu` : `${total} ảnh đã tải`;
+            btnClear.style.display = isDefault ? 'none' : 'block';
+
+            const baseScale = total <= 8 ? 1.0 : Math.max(0.55, 1.0 - (total - 8) * 0.02);
+            const orbitRadius = total <= 10 ? 10.5 : Math.min(16, 10.5 + (total - 10) * 0.25);
+
+            for (let i = 0; i < total; i++) {
+                const group = new THREE.Group();
+
+                const borderGeo = new THREE.PlaneGeometry(3.3, 3.3);
+                const borderMat = new THREE.MeshBasicMaterial({
+                    color: 0xffcc00,
+                    side: THREE.DoubleSide,
+                    transparent: true,
+                    opacity: 0
+                });
+                const borderMesh = new THREE.Mesh(borderGeo, borderMat);
+                borderMesh.position.z = -0.02;
+                group.add(borderMesh);
+
+                const photoGeo = new THREE.PlaneGeometry(3.0, 3.0);
+                const photoMat = new THREE.MeshBasicMaterial({
+                    map: texturesToUse[i],
+                    side: THREE.DoubleSide,
+                    transparent: true,
+                    opacity: 0
+                });
+                const photoMesh = new THREE.Mesh(photoGeo, photoMat);
+                group.add(photoMesh);
+
+                const hiddenY = -3 + ((i % 7) / 7) * 7;
+
+                const phi = Math.acos(1 - 2 * (i + 0.5) / total);
+                const theta = Math.PI * (1 + Math.sqrt(5)) * i;
+
+                const expX = orbitRadius * Math.sin(phi) * Math.cos(theta);
+                const expY = orbitRadius * Math.cos(phi) * 0.75;
+                const expZ = orbitRadius * Math.sin(phi) * Math.sin(theta);
+
+                group.userData = {
+                    hiddenPos: new THREE.Vector3(0, hiddenY, 0),
+                    explodePos: new THREE.Vector3(expX, expY, expZ),
+                    photoMat: photoMat,
+                    borderMat: borderMat,
+                    baseScale: baseScale
+                };
+
+                group.position.copy(group.userData.hiddenPos);
+                group.scale.setScalar(0.001);
+                group.visible = false;
+
+                mainGroup.add(group);
+                photoCards.push(group);
+            }
+        }
+
+        rebuildPhotoCards();
+
+        document.getElementById('file-input').addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            if (!files.length) return;
+
+            let loadedCount = 0;
+            files.forEach((file) => {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = 512; canvas.height = 512;
+                        const ctx = canvas.getContext('2d');
+                        const minSide = Math.min(img.width, img.height);
+                        const sx = (img.width - minSide) / 2;
+                        const sy = (img.height - minSide) / 2;
+                        ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, 512, 512);
+
+                        const tex = new THREE.CanvasTexture(canvas);
+                        uploadedTextures.push(tex);
+                        loadedCount++;
+
+                        if (loadedCount === files.length) {
+                            rebuildPhotoCards();
+                        }
+                    };
+                    img.src = ev.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+            e.target.value = '';
+        });
+
+        btnClear.addEventListener('click', () => {
+            uploadedTextures.forEach(tex => tex.dispose());
+            uploadedTextures = [];
+            isPinching = false;
+            rebuildPhotoCards();
+        });
+
+        // --- 5. TRẠNG THÁI TƯƠNG TÁC (XOAY NGANG + LÊN XUỐNG) ---
+        let targetExpansion = 0;
+        let currentExpansion = 0;
+        let isPinching = false;
+        let activePhotoIndex = 0;
+
+        let isHandDetected = false;
+        const IDLE_ROT_SPEED = 0.005;
+        let targetRotSpeedY = IDLE_ROT_SPEED;
+        let currentRotSpeedY = IDLE_ROT_SPEED;
+
+        // Điều khiển lên xuống (cao độ Y & góc nghiêng X)
+        let targetOffsetY = 0;
+        let currentOffsetY = 0;
+        let targetRotX = 0;
+
+        let isDragging = false;
+        let prevMouse = { x: 0, y: 0 };
+        window.addEventListener('mousedown', (e) => { isDragging = true; prevMouse = { x: e.clientX, y: e.clientY }; });
+        window.addEventListener('mouseup', () => { isDragging = false; });
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            mainGroup.rotation.y += (e.clientX - prevMouse.x) * 0.008;
+            targetOffsetY = THREE.MathUtils.clamp(targetOffsetY - (e.clientY - prevMouse.y) * 0.02, -4.5, 4.5);
+            targetRotX = THREE.MathUtils.clamp(targetRotX + (e.clientY - prevMouse.y) * 0.004, -0.5, 0.5);
+            prevMouse = { x: e.clientX, y: e.clientY };
+        });
+        window.addEventListener('wheel', (e) => {
+            targetExpansion = Math.max(0, Math.min(1, targetExpansion + e.deltaY * 0.001));
+            if (targetExpansion < 0.25) isPinching = false;
+        });
+        window.addEventListener('dblclick', () => {
+            if (currentExpansion > 0.3) {
+                isPinching = !isPinching;
+                if (isPinching) findNearestPhoto();
+            }
+        });
+
+        function findNearestPhoto() {
+            let minDist = Infinity;
+            const worldPos = new THREE.Vector3();
+            photoCards.forEach((card, idx) => {
+                card.getWorldPosition(worldPos);
+                const dist = worldPos.distanceTo(camera.position);
+                if (dist < minDist) {
+                    minDist = dist;
+                    activePhotoIndex = idx;
+                }
+            });
+        }
+
+        // --- 6. NHẬN DIỆN CAMERA: 3 VÙNG NGANG (TRÁI/GIỮA/PHẢI) & 3 VÙNG DỌC (LÊN/GIỮA/XUỐNG) ---
+        const videoElement = document.getElementById('webcam');
+        const statusText = document.getElementById('gesture-status');
+        const cameraBox = document.getElementById('camera-box');
+        const camErrorNote = document.getElementById('cam-error-note');
+        const btnCam = document.getElementById('btn-cam');
+
+        let handsInstance = null;
+        let activeStream = null;
+        let detectLoopId = null;
+
+        function showCamError(msg) {
+            camErrorNote.style.display = 'block';
+            camErrorNote.innerHTML = msg;
+        }
+
+        btnCam.addEventListener('click', async () => {
+            camErrorNote.style.display = 'none';
+            cameraBox.style.display = 'block';
+            statusText.innerText = 'Đang xin quyền Camera...';
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                statusText.innerText = 'Lỗi Camera';
+                showCamError('Trình duyệt không hỗ trợ Camera hoặc trang đang mở qua kết nối không bảo mật (cần <strong>HTTPS</strong> hoặc <strong>localhost</strong>).');
+                return;
+            }
+
+            try {
+                if (activeStream) {
+                    activeStream.getTracks().forEach(t => t.stop());
+                }
+
+                activeStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+                    audio: false
+                });
+
+                videoElement.srcObject = activeStream;
+                await videoElement.play();
+
+                if (!handsInstance && typeof Hands !== 'undefined') {
+                    handsInstance = new Hands({
+                        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                    });
+
+                    handsInstance.setOptions({
+                        maxNumHands: 1,
+                        modelComplexity: 1,
+                        minDetectionConfidence: 0.7,
+                        minTrackingConfidence: 0.7
+                    });
+
+                    handsInstance.onResults(onHandResults);
+                }
+
+                btnCam.innerText = '🔄 Camera Đang Bật';
+                statusText.innerText = '🔄 Tự động xoay & nhấp nhô';
+
+                if (detectLoopId) cancelAnimationFrame(detectLoopId);
+                async function processVideoFrame() {
+                    if (videoElement.readyState >= 2 && handsInstance) {
+                        try {
+                            await handsInstance.send({ image: videoElement });
+                        } catch (_) {}
+                    }
+                    detectLoopId = requestAnimationFrame(processVideoFrame);
+                }
+                detectLoopId = requestAnimationFrame(processVideoFrame);
+            } catch (err) {
+                statusText.innerText = 'Không mở được Camera';
+                let detail = 'Không thể truy cập camera.';
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    detail = 'Bạn đã từ chối quyền Camera. Hãy bấm biểu tượng <strong>Camera / Ổ khóa</strong> trên thanh địa chỉ để cấp quyền <strong>Allow</strong> rồi tải lại trang.';
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    detail = 'Không tìm thấy thiết bị Camera nào trên máy này.';
+                } else if (err.name === 'NotReadableError') {
+                    detail = 'Camera đang được ứng dụng khác sử dụng. Hãy đóng ứng dụng đó và thử lại.';
+                } else if (!window.isSecureContext) {
+                    detail = 'Trang hiện tại không chạy trong ngữ cảnh bảo mật (HTTPS / localhost), nên trình duyệt chặn Camera.';
+                }
+                showCamError(detail);
+            }
+        });
+
+        function onHandResults(results) {
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                isHandDetected = false;
+                statusText.innerText = '🔄 Tự động xoay & nhấp nhô';
+                targetRotSpeedY = IDLE_ROT_SPEED;
+                targetOffsetY = 0;
+                targetRotX = 0;
+                return;
+            }
+
+            isHandDetected = true;
+            const lm = results.multiHandLandmarks[0];
+            const wrist = lm[0];
+            const thumbTip = lm[4];
+            const indexTip = lm[8];
+            const middleMcp = lm[9];
+            const middleTip = lm[12];
+            const ringTip = lm[16];
+            const pinkyTip = lm[20];
+
+            const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+            const avgFingerDist = (
+                dist(indexTip, wrist) +
+                dist(middleTip, wrist) +
+                dist(ringTip, wrist) +
+                dist(pinkyTip, wrist)
+            ) / 4;
+
+            const pinchDist = dist(thumbTip, indexTip);
+            const screenX = 1 - middleMcp.x; // 0 = trái, 1 = phải
+            const screenY = middleMcp.y;     // 0 = trên, 1 = dưới
+
+            // 1. Chia ngầm 3 vùng NGANG (Trái / Giữa / Phải)
+            let hLabel = '';
+            if (screenX < 0.35) {
+                const intensity = (0.35 - screenX) / 0.35;
+                targetRotSpeedY = -(0.012 + intensity * 0.025);
+                hLabel = '⬅️ Trái';
+            } else if (screenX > 0.65) {
+                const intensity = (screenX - 0.65) / 0.35;
+                targetRotSpeedY = (0.012 + intensity * 0.025);
+                hLabel = '➡️ Phải';
+            } else {
+                targetRotSpeedY = 0;
+                hLabel = '⏸ Giữa';
+            }
+
+            // 2. Chia ngầm 3 vùng DỌC (Lên / Giữa / Xuống)
+            let vLabel = '';
+            if (screenY < 0.35) {
+                // Phần trên: nâng cây thông / vòng ảnh lên cao
+                const intensity = (0.35 - screenY) / 0.35;
+                targetOffsetY = 1.2 + intensity * 2.8;
+                targetRotX = -(0.1 + intensity * 0.25);
+                vLabel = '⬆️ Lên';
+            } else if (screenY > 0.65) {
+                // Phần dưới: hạ cây thông / vòng ảnh xuống thấp
+                const intensity = (screenY - 0.65) / 0.35;
+                targetOffsetY = -(1.2 + intensity * 2.8);
+                targetRotX = (0.1 + intensity * 0.25);
+                vLabel = '⬇️ Xuống';
+            } else {
+                // Phần giữa: giữ cân bằng
+                targetOffsetY = 0;
+                targetRotX = 0;
+                vLabel = '';
+            }
+
+            const dirText = vLabel ? `${hLabel} ${vLabel}` : hLabel;
+
+            if (avgFingerDist < 0.23) {
+                statusText.innerText = `✊ Nắm tay | ${dirText}`;
+                targetExpansion = 0;
+                isPinching = false;
+            } else if (pinchDist < 0.055) {
+                statusText.innerText = '👌 Chụm ngón: Xem ảnh';
+                if (targetExpansion < 0.5) targetExpansion = 1;
+                if (!isPinching) findNearestPhoto();
+                isPinching = true;
+                targetRotSpeedY = 0;
+                currentRotSpeedY = 0;
+            } else {
+                statusText.innerText = `🖐 Xòe tay | ${dirText}`;
+                targetExpansion = 1;
+                isPinching = false;
+            }
+        }
+
+        // --- 7. VÒNG LẶP ANIMATION ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const elapsed = clock.getElapsedTime();
+
+            currentExpansion += (targetExpansion - currentExpansion) * 0.07;
+
+            // Cập nhật vị trí hạt sáng kèm hiệu ứng sóng nhấp nhô lên xuống nhẹ nhàng
+            const posAttr = geometry.attributes.position;
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                const baseX = THREE.MathUtils.lerp(treeTargets[i3], explodeTargets[i3], currentExpansion);
+                const baseY = THREE.MathUtils.lerp(treeTargets[i3 + 1], explodeTargets[i3 + 1], currentExpansion);
+                const baseZ = THREE.MathUtils.lerp(treeTargets[i3 + 2], explodeTargets[i3 + 2], currentExpansion);
+
+                // Sóng lượn lên xuống nhẹ cho từng hạt sáng
+                const waveY = Math.sin(elapsed * 2.2 + particlePhases[i] + baseY * 0.35) * (0.12 + currentExpansion * 0.25);
+
+                posAttr.array[i3] = baseX;
+                posAttr.array[i3 + 1] = baseY + waveY;
+                posAttr.array[i3 + 2] = baseZ;
+            }
+            posAttr.needsUpdate = true;
+
+            // Xoay ngang
+            if (!isHandDetected && !isDragging && !isPinching) {
+                currentRotSpeedY += (IDLE_ROT_SPEED - currentRotSpeedY) * 0.06;
+                mainGroup.rotation.y += currentRotSpeedY;
+            } else if (!isDragging) {
+                const damping = targetRotSpeedY === 0 ? 0.35 : 0.12;
+                currentRotSpeedY += (targetRotSpeedY - currentRotSpeedY) * damping;
+
+                if (targetRotSpeedY === 0 && Math.abs(currentRotSpeedY) < 0.0005) {
+                    currentRotSpeedY = 0;
+                }
+
+                mainGroup.rotation.y += currentRotSpeedY;
+            }
+
+            // Chuyển động lên xuống mượt mà (kết hợp điều khiển tay + nhịp nhấp nhô tự nhiên)
+            currentOffsetY += (targetOffsetY - currentOffsetY) * 0.08;
+            const idleBobbingY = !isPinching ? Math.sin(elapsed * 1.6) * 0.55 : 0;
+            mainGroup.position.y = currentOffsetY + idleBobbingY;
+
+            mainGroup.rotation.x += (targetRotX - mainGroup.rotation.x) * 0.07;
+
+            // Ngôi sao 5 cánh xoay và nhấp nhô nhẹ trên đỉnh
+            topStar.rotation.y = elapsed * 1.5;
+            topStar.position.y = 8.9 + Math.sin(elapsed * 2.5) * 0.18;
+            topStar.scale.setScalar(Math.max(0.001, 1 - currentExpansion * 0.9));
+
+            const revealFactor = THREE.MathUtils.clamp((currentExpansion - 0.08) / 0.7, 0, 1);
+
+            photoCards.forEach((card, idx) => {
+                if (revealFactor <= 0.01 && !isPinching) {
+                    card.visible = false;
+                    card.position.copy(card.userData.hiddenPos);
+                    card.scale.setScalar(0.001);
+                    card.userData.photoMat.opacity = 0;
+                    card.userData.borderMat.opacity = 0;
+                    return;
+                }
+
+                card.visible = true;
+                card.userData.photoMat.opacity = revealFactor;
+                card.userData.borderMat.opacity = revealFactor;
+
+                const basePos = new THREE.Vector3().lerpVectors(
+                    card.userData.hiddenPos,
+                    card.userData.explodePos,
+                    currentExpansion
+                );
+                // Hiệu ứng nhấp nhô lên xuống lệch pha cho từng khung ảnh
+                basePos.y += Math.sin(elapsed * 2.2 + idx * 0.9) * 0.45 * revealFactor;
+
+                if (isPinching && idx === activePhotoIndex) {
+                    const frontWorldPos = new THREE.Vector3(0, 0, 18);
+                    const localTarget = mainGroup.worldToLocal(frontWorldPos);
+                    card.position.lerp(localTarget, 0.12);
+                    card.scale.lerp(new THREE.Vector3(2.4, 2.4, 2.4), 0.12);
+                    card.userData.photoMat.opacity = 1;
+                    card.userData.borderMat.opacity = 1;
+                    card.lookAt(camera.position);
+                } else {
+                    card.position.lerp(basePos, 0.08);
+                    const s = Math.max(0.001, revealFactor * 1.15 * card.userData.baseScale);
+                    card.scale.lerp(new THREE.Vector3(s, s, s), 0.08);
+                    card.lookAt(camera.position);
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
